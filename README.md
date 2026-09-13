@@ -2261,9 +2261,9 @@ SD-WAN
 2. **Créer** des règles SD-WAN pour la sélection de chemin.
 3. **Tester** le load balancing et le failover SD-WAN.
 
-### 11.9 Configuration d'une Performance SLA
+## 11.9 Configuration d'une Performance SLA
 
-#### 11.9.1 Pourquoi une Performance SLA ?
+### 11.9.1 Pourquoi une Performance SLA ?
 
 Une Performance SLA permet au SD-WAN de mesurer en continu la qualité des
 différents liens WAN afin de pouvoir prendre des décisions de sélection de
