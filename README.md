@@ -2257,10 +2257,137 @@ SD-WAN
 
 **Ce qui reste à faire :**
 
-1. **Créer** des règles SD-WAN pour la sélection de chemin.
-2. **Configurer** les Performance SLA.
+1. **Configurer** les Performance SLA.
+2. **Créer** des règles SD-WAN pour la sélection de chemin.
 3. **Tester** le load balancing et le failover SD-WAN.
 
+### 11.9 Configuration d'une Performance SLA
+
+#### 11.9.1 Pourquoi une Performance SLA ?
+
+Une Performance SLA permet au SD-WAN de mesurer en continu la qualité des
+différents liens WAN afin de pouvoir prendre des décisions de sélection de
+chemin en fonction de critères de performance.
+
+Dans ce laboratoire, un health-check dédié nommé `Internet_SLA` est utilisé
+pour mesurer la qualité des deux membres SD-WAN :
+
+- `port1` → ISP1
+- `port2` → ISP2
+
+Les seuils configurés sont :
+
+| Critère | Seuil |
+|---|---:|
+| Latence | 150 ms |
+| Jitter | 50 ms |
+| Perte de paquets | 5 % |
+
+---
+
+#### 11.9.2 Création du health-check `Internet_SLA`
+
+Lors de la création du health-check, le nom `Internet-SLA` a d'abord été
+refusé par FortiOS :
+
+```text
+char(-) is reserved.
+node_check_object fail! for name Internet-SLA
+
+value parse error before 'Internet-SLA'
+Command fail. Return code -651
+````
+
+Le caractère `-` étant réservé, le nom a été remplacé par `Internet_SLA`.
+
+Configuration réalisée :
+
+```bash
+config system sdwan
+    config health-check
+        edit Internet_SLA
+            set server 8.8.8.8
+            set members 1 2
+            set interval 1000
+            set probe-timeout 1000
+            set recoverytime 10
+            config sla
+                edit 1
+                    set latency-threshold 150
+                    set jitter-threshold 50
+                    set packetloss-threshold 5
+                next
+            end
+        next
+    end
+end
+```
+
+La commande `show system sdwan` a ensuite confirmé la présence du
+health-check `Internet_SLA` avec les paramètres configurés.
+
+---
+
+#### 11.9.3 Diagnostic des liens
+
+La commande suivante permet de vérifier en temps réel l'état du Performance
+SLA sur les deux membres SD-WAN :
+
+```bash
+diagnose sys sdwan health-check
+```
+
+Résultat obtenu :
+
+```text
+Health Check(Internet_SLA):
+Seq(1 port1): state(alive), packet-loss(0.000%), latency(66.463), jitter(3.444), mos(4.365), bandwidth-up(9999999), bandwidth-dw(9999998), bandwidth-bi(19999997), sla_map=0x1
+Seq(2 port2): state(alive), packet-loss(0.000%), latency(66.390), jitter(3.807), mos(4.365), bandwidth-up(10000000), bandwidth-dw(10000000), bandwidth-bi(20000000), sla_map=0x1
+```
+
+![Performance SLA — Diagnostic des liens SD-WAN](images/performance-sla-health-check.png)
+
+> **Figure — Diagnostic du Performance SLA sur les membres `port1` et `port2`.**
+
+**Interprétation :**
+
+| Paramètre        |   `port1` |   `port2` |
+| ---------------- | --------: | --------: |
+| État             |   `alive` |   `alive` |
+| Perte de paquets |       0 % |       0 % |
+| Latence          | 66.463 ms | 66.390 ms |
+| Jitter           |  3.444 ms |  3.807 ms |
+| MOS              |     4.365 |     4.365 |
+| SLA              | Respectée | Respectée |
+
+Les deux membres SD-WAN sont actuellement opérationnels et respectent les
+seuils configurés :
+
+* Latence ≤ 150 ms ;
+* Jitter ≤ 50 ms ;
+* Perte de paquets ≤ 5 %.
+
+Le champ `sla_map=0x1` indique que le seuil SLA configuré est respecté.
+
+**Validation : Performance SLA opérationnelle sur les deux liens WAN. ✅**
+
+---
+
+#### 11.9.4 État du SD-WAN après SLA
+
+```text
+SD-WAN
+├── Status                           ✅ Activé
+├── Zone "virtual-wan-link"          ✅ Existe
+├── Membre 1 (port1)                 ✅ Gateway 192.168.120.1
+├── Membre 2 (port2)                 ✅ Gateway 192.168.121.1
+├── Health-checks par défaut         ✅ Configurés (5)
+├── Performance SLA "Internet_SLA"   ✅ Opérationnelle
+├── Route par défaut SD-WAN          ✅ Créée
+├── Table de routage                 ✅ Correcte
+├── Test Internet FortiGate         ✅
+└── Test Internet PC1               ✅
+```
 
 
 
