@@ -2388,6 +2388,276 @@ SD-WAN
 ├── Test Internet FortiGate         ✅
 └── Test Internet PC1               ✅
 ```
+---
+
+## 11.10 Configuration d'une règle SD-WAN — Best Quality
+
+Après avoir configuré la Performance SLA `Internet_SLA`, l'étape suivante consiste à créer une règle SD-WAN permettant à FortiGate de sélectionner le meilleur lien en fonction de la qualité mesurée.
+
+Dans notre laboratoire, les deux liens WAN sont :
+
+- **Member 1** → `port1` → ISP1
+- **Member 2** → `port2` → ISP2
+
+La règle sera appliquée au trafic IPv4 provenant de toutes les sources et à destination de toutes les destinations.
+
+### 11.10.1 Création de la règle SD-WAN
+
+Nous commençons par accéder à la configuration des services SD-WAN :
+
+```bash
+config system sdwan
+    config service
+        edit 1
+```
+
+Une nouvelle entrée `1` est créée :
+
+```text
+new entry '1' added
+```
+
+Avant de configurer la règle, les valeurs par défaut sont vérifiées :
+
+```bash
+show
+```
+
+Résultat :
+
+```text
+config service
+    edit 1
+    next
+end
+```
+
+La règle est donc initialement vide.
+
+---
+
+### 11.10.2 Configuration de la règle `Internet_Best_Quality`
+
+La règle est configurée avec les paramètres suivants :
+
+```bash
+set name "Internet_Best_Quality"
+set mode priority
+set src "all"
+set dst "all"
+set health-check "Internet_SLA"
+set link-cost-factor latency
+set priority-members 1 2
+```
+
+#### Explication des paramètres
+
+| Paramètre | Valeur | Rôle |
+|---|---|---|
+| `name` | `Internet_Best_Quality` | Nom de la règle |
+| `mode` | `priority` | Définit la logique de sélection des membres |
+| `src` | `all` | Toutes les adresses sources |
+| `dst` | `all` | Toutes les destinations |
+| `health-check` | `Internet_SLA` | Utilise la Performance SLA précédemment créée |
+| `link-cost-factor` | `latency` | Utilise la latence comme critère de qualité |
+| `priority-members` | `1 2` | Membres SD-WAN pris en compte : ISP1 puis ISP2 |
+
+La configuration est ensuite vérifiée avec :
+
+```bash
+show
+```
+
+Résultat :
+
+```text
+config service
+    edit 1
+        set name "Internet_Best_Quality"
+        set mode priority
+        set dst "all"
+        set src "all"
+        set health-check "Internet_SLA"
+        set priority-members 1 2
+    next
+end
+```
+
+Le paramètre `link-cost-factor latency` n'apparaît pas dans la sortie de `show`.
+
+Cependant, le diagnostic du service SD-WAN effectué après l'enregistrement de la configuration confirme que le facteur de coût utilisé par la règle est bien `latency`.
+
+---
+
+### 11.10.3 Vérification du service SD-WAN
+
+Après avoir quitté la configuration du service :
+
+```bash
+next
+end
+end
+```
+
+nous vérifions le comportement de la règle avec :
+
+```bash
+diagnose sys sdwan service4 1
+```
+
+Le résultat obtenu est :
+
+```text
+Service(1): Address Mode(IPV4) flags=0x4200 use-shortcut-sla use-shortcut
+ Tie break: cfg
+ Shortcut priority: 2
+  Gen(1), TOS(0x0/0x0), Protocol(0): src(1->65535):dst(1->65535), Mode(priority), link-cost-factor(latency), link-cost-threshold(10), heath-check(Internet_SLA)
+  Members(2):
+    1: Seq_num(1 port1 virtual-wan-link), alive, latency: 68.824, selected
+    2: Seq_num(2 port2 virtual-wan-link), alive, latency: 69.371, selected
+  Src address(1):
+        0.0.0.0-255.255.255.255
+  Dst address(1):
+        0.0.0.0-255.255.255.255
+```
+
+Cette sortie confirme plusieurs éléments importants :
+
+* La règle est bien le **Service 1**.
+* Le mode utilisé est `priority`.
+* Le facteur de coût est bien `latency`.
+* Le health-check utilisé est `Internet_SLA`.
+* `port1` est `alive`.
+* `port2` est `alive`.
+* La latence mesurée est :
+
+  * `port1` : **68.824 ms**
+  * `port2` : **69.371 ms**
+
+À ce moment du test, `port1` présente donc une latence légèrement inférieure à `port2`.
+
+> **Remarque :** le diagnostic indique les deux membres comme `selected`. Cette information indique que les deux membres sont actuellement éligibles pour le service. La vérification de la session réelle permettra de déterminer quel membre est effectivement utilisé par un flux donné.
+
+#### Capture — Diagnostic de la règle SD-WAN
+
+La commande `diagnose sys sdwan service4 1` confirme que la règle utilise le mode `priority`, le critère `latency` et le health-check `Internet_SLA`.
+
+![Diagnostic de la règle SD-WAN](images/sdwan-rule-best-quality.png)
+
+---
+
+### 11.10.4 Test du trafic Internet depuis PC1
+
+Depuis PC1, un test ICMP vers Internet est effectué :
+
+```bash
+ping -c 10 8.8.8.8
+```
+
+Résultat :
+
+```text
+10 packets transmitted, 10 packets received, 0% packet loss
+round-trip min/avg/max = 67.476/69.889/78.720 ms
+```
+
+Le trafic Internet fonctionne donc correctement après l'application de la règle SD-WAN.
+
+Résultats :
+
+* Paquets transmis : **10**
+* Paquets reçus : **10**
+* Perte : **0 %**
+* Latence minimale : **67.476 ms**
+* Latence moyenne : **69.889 ms**
+* Latence maximale : **78.720 ms**
+
+---
+
+### 11.10.5 Vérification du membre réellement utilisé
+
+Pour identifier le chemin réellement utilisé par le trafic de PC1, une session active est observée sur le FortiGate avec :
+
+```bash
+diagnose sys session list
+```
+
+La session ICMP de PC1 présente notamment les informations suivantes :
+
+```text
+hook=post dir=org act=snat 172.16.1.100:2430->8.8.8.8:8(192.168.120.10:7547)
+```
+
+L'adresse source privée de PC1 :
+
+```text
+172.16.1.100
+```
+
+est donc translatée en :
+
+```text
+192.168.120.10
+```
+
+qui correspond à l'adresse WAN de `port1` (ISP1).
+
+La ligne suivante confirme directement le membre SD-WAN utilisé :
+
+```text
+sdwan_mbr_seq=1 sdwan_service_id=1
+```
+
+Le trafic de PC1 a donc utilisé :
+
+```text
+Service SD-WAN : 1
+Membre SD-WAN  : 1
+Interface       : port1
+WAN             : ISP1
+```
+
+La passerelle utilisée est également visible dans la session :
+
+```text
+gwy=192.168.120.1/0.0.0.0
+```
+
+#### Capture — Session réelle de PC1
+
+La session active de PC1 confirme que le trafic utilise le membre SD-WAN `1`, correspondant à `port1` / ISP1.
+
+![Session SD-WAN de PC1](images/sdwan-session-member1.png)
+
+---
+
+### 11.10.6 État après le premier test
+
+À ce stade, la règle `Internet_Best_Quality` est opérationnelle.
+
+État observé :
+
+| Élément | Résultat |
+|---|---|
+| Règle SD-WAN | `Internet_Best_Quality` |
+| Service | `1` |
+| Mode | `priority` |
+| Critère | `latency` |
+| Performance SLA | `Internet_SLA` |
+| Member 1 | `port1` — alive |
+| Member 2 | `port2` — alive |
+| Latence port1 | `68.824 ms` |
+| Latence port2 | `69.371 ms` |
+| Test Internet PC1 | Réussi |
+| Perte de paquets | `0 %` |
+| Membre utilisé par la session PC1 | `1 — port1` |
+| IP SNAT observée | `192.168.120.10` |
+
+Le premier test montre donc que le trafic Internet de PC1 est actuellement acheminé par **ISP1 (`port1`)**, qui présente au moment de la mesure une latence légèrement inférieure à celle d'ISP2.
+
+La prochaine étape consistera à **dégrader volontairement la qualité d'un des deux liens dans EVE-NG** afin d'observer le comportement de la règle `Internet_Best_Quality` lorsque le lien actuellement privilégié devient moins performant.
+
+---
 
 
 
