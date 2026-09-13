@@ -2659,6 +2659,333 @@ La prochaine étape consistera à **dégrader volontairement la qualité d'un de
 
 ---
 
+## 11.11 Test de sélection du meilleur lien sous dégradation
+
+Après la création de la règle `Internet_Best_Quality`, nous allons vérifier son comportement lorsqu'un des deux liens WAN devient moins performant.
+
+L'objectif est de vérifier que FortiGate utilise les informations de la Performance SLA `Internet_SLA` pour privilégier le lien présentant la meilleure qualité.
+
+Dans ce test, nous allons volontairement augmenter la latence du chemin ISP1 afin de rendre ISP2 plus performant.
+
+### 11.11.1 Vérification des réseaux WAN sur l'hôte Linux
+
+Dans notre laboratoire EVE-NG, les deux réseaux WAN sont reliés à des bridges Linux distincts :
+
+```text
+ISP1 → virbr0 → 192.168.120.0/24
+ISP2 → virbr1 → 192.168.121.0/24
+```
+
+Vérification de `virbr0` :
+
+```bash
+ip addr show virbr0
+```
+
+Résultat :
+
+```text
+virbr0: <BROADCAST,MULTICAST,UP,LOWER_UP>
+inet 192.168.120.1/24
+```
+
+Vérification de `virbr1` :
+
+```bash
+ip addr show virbr1
+```
+
+Résultat :
+
+```text
+virbr1: <BROADCAST,MULTICAST,UP,LOWER_UP>
+inet 192.168.121.1/24
+```
+
+### 11.11.2 Identification des interfaces de la VM EVE-NG
+
+La VM EVE-NG utilise les deux réseaux suivants :
+
+```bash
+sudo virsh domiflist eve-ng
+```
+
+Résultat :
+
+```text
+Interface   Type      Source    Model    MAC
+-------------------------------------------------------------
+vnet0       network   default   virtio   52:54:00:42:37:34
+vnet1       network   lab-net   virtio   52:54:00:b3:4c:c8
+```
+
+La correspondance est donc :
+
+```text
+vnet0 → default → virbr0 → ISP1 / FortiGate port1
+vnet1 → lab-net → virbr1 → ISP2 / FortiGate port2
+```
+
+Cette correspondance est également vérifiée avec :
+
+```bash
+sudo bridge link
+```
+
+Résultat :
+
+```text
+vnet0: ... master virbr0 state forwarding
+vnet1: ... master virbr1 state forwarding
+```
+
+### 11.11.3 Vérification de l'état initial de `vnet0`
+
+Avant d'appliquer une dégradation, l'état de la file d'attente de `vnet0` est vérifié :
+
+```bash
+sudo tc qdisc show dev vnet0
+```
+
+Résultat initial :
+
+```text
+qdisc noqueue 8001: root refcnt 2
+```
+
+Aucune dégradation `netem` n'est donc présente à ce moment.
+
+### 11.11.4 Dégradation temporaire du chemin ISP1
+
+Le chemin ISP1 correspondant à `vnet0`, une latence artificielle de `100 ms` est ajoutée uniquement sur cette interface :
+
+```bash
+sudo tc qdisc add dev vnet0 root netem delay 100ms
+```
+
+La commande est exécutée sans erreur.
+
+La présence de la dégradation est ensuite vérifiée :
+
+```bash
+tc qdisc show dev vnet0
+```
+
+Résultat :
+
+```text
+qdisc netem 8003: root refcnt 2 limit 1000 delay 100ms
+```
+
+La latence supplémentaire de `100 ms` est donc bien active sur `vnet0`.
+
+### 11.11.5 Observation de la Performance SLA
+
+Sur le FortiGate, l'état de la Performance SLA `Internet_SLA` est vérifié :
+
+```bash
+diagnose sys sdwan health-check
+```
+
+Résultat obtenu pendant la dégradation :
+
+```text
+Health Check(Internet_SLA):
+Seq(1 port1): state(alive), packet-loss(0.000%), latency(170.244), jitter(7.993), mos(4.216), bandwidth-up(9999997), bandwidth-dw(9999997), bandwidth-bi(19999994), sla_map=0x0
+Seq(2 port2): state(alive), packet-loss(0.000%), latency(70.217), jitter(7.218), mos(4.359), bandwidth-up(9999999), bandwidth-dw(10000000), bandwidth-bi(19999999), sla_map=0x1
+```
+
+La dégradation est clairement visible :
+
+| Lien | Latence | Perte | État |
+|---|---|---|---|
+| `port1` / ISP1 | **170.244 ms** | 0 % | alive |
+| `port2` / ISP2 | **70.217 ms** | 0 % | alive |
+
+Le lien ISP1 reste disponible, mais sa latence est devenue nettement supérieure à celle d'ISP2. Sa SLA n'est plus respectée (`sla_map=0x0`).
+
+![Performance SLA après dégradation](images/sdwan-failover-health-check.png)
+
+*Le health-check `Internet_SLA` détecte la dégradation d'ISP1 : `sla_map=0x0` sur `port1` (170.244 ms), `sla_map=0x1` sur `port2` (70.217 ms).*
+
+### 11.11.6 Vérification de la décision SD-WAN
+
+La règle `Internet_Best_Quality` est ensuite vérifiée :
+
+```bash
+diagnose sys sdwan service4 1
+```
+
+Résultat :
+
+```text
+Service(1): Address Mode(IPV4) flags=0x4200 use-shortcut-sla use-shortcut
+  Mode(priority), link-cost-factor(latency), link-cost-threshold(10), heath-check(Internet_SLA)
+  Members(2):
+    1: Seq_num(2 port2 virtual-wan-link), alive, latency: 69.091, selected
+    2: Seq_num(1 port1 virtual-wan-link), alive, latency: 168.800, selected
+```
+
+`port2` présente désormais la meilleure latence et est placé en position 1.
+
+![Décision de la règle SD-WAN](images/sdwan-failover-service.png)
+
+*Le service SD-WAN a réorganisé les membres : `port2` est passé en premier (`Seq_num 2`), `port1` en deuxième (`Seq_num 1`).*
+
+### 11.11.7 Vérification de la session réelle de PC1
+
+```bash
+diagnose sys session list | grep "172.16.1.100"
+```
+
+Résultat obtenu :
+
+```text
+hook=post dir=org act=snat 172.16.1.100:2442->8.8.8.8:8(192.168.121.10:7559)
+hook=pre dir=reply act=dnat 8.8.8.8:7559->192.168.121.10:0(172.16.1.100:2442)
+```
+
+L'adresse SNAT utilisée est `192.168.121.10`, correspondant à `port2` (ISP2).
+
+![Session réelle de PC1 via ISP2](images/sdwan-failover-session.png)
+
+*La session de PC1 est maintenant NATée vers `192.168.121.10`, l'adresse WAN de `port2` (ISP2). Le basculement est confirmé au niveau du trafic réel.*
+
+### 11.11.8 Résultat du test
+
+Le test démontre que la dégradation du lien ISP1 entraîne une modification du chemin utilisé par le trafic.
+
+État avant dégradation :
+
+```text
+port1 → environ 68.8 ms
+port2 → environ 69.4 ms
+```
+
+Après ajout de `100 ms` sur `vnet0` :
+
+```text
+port1 → 170.244 ms
+port2 → 70.217 ms
+```
+
+La session de PC1 utilise alors `192.168.121.10` (ISP2).
+
+Le trafic de PC1 utilise donc **ISP2 lorsque ISP1 devient moins performant**.
+
+### 11.11.9 Nettoyage de la dégradation
+
+Après le test, la configuration `netem` est supprimée :
+
+```bash
+sudo tc qdisc del dev vnet0 root
+```
+
+Après suppression, Linux affiche :
+
+```text
+qdisc fq_codel 0: root refcnt 2 ...
+```
+
+Le `netem` a donc bien été supprimé.
+
+Afin de remettre `vnet0` dans son état initial `noqueue`, la file d'attente est ensuite remplacée par `noqueue` :
+
+```bash
+sudo tc qdisc replace dev vnet0 root noqueue
+```
+
+Vérification :
+
+```bash
+tc qdisc show dev vnet0
+```
+
+Résultat :
+
+```text
+qdisc noqueue 8004: root refcnt 2
+```
+
+Le chemin ISP1 est ainsi revenu à son état initial sans dégradation artificielle.
+
+### 11.11.10 Vérification après restauration
+
+L'état de la Performance SLA est vérifié après nettoyage :
+
+```bash
+diagnose sys sdwan health-check
+```
+
+Résultat après restauration :
+
+```text
+Health Check(Internet_SLA):
+Seq(1 port1): state(alive), packet-loss(0.000%), latency(67.886), jitter(1.931), mos(4.366), bandwidth-up(9999998), bandwidth-dw(9999998), bandwidth-bi(19999996), sla_map=0x1
+Seq(2 port2): state(alive), packet-loss(0.000%), latency(67.824), jitter(2.045), mos(4.366), bandwidth-up(10000000), bandwidth-dw(10000000), bandwidth-bi(20000000), sla_map=0x1
+```
+
+Les deux liens sont de nouveau opérationnels et respectent la SLA.
+
+![Health-Check après retour à la normale](images/sdwan-failover-return-health-check.png)
+
+*Le health-check `Internet_SLA` confirme le retour à la normale : `port1` et `port2` sont tous les deux à ~68 ms avec `sla_map=0x1`.*
+
+La règle SD-WAN est également vérifiée :
+
+```bash
+diagnose sys sdwan service4 1
+```
+
+Résultat :
+
+```text
+Service(1): Address Mode(IPV4) flags=0x4200 use-shortcut-sla use-shortcut
+  Mode(priority), link-cost-factor(latency), link-cost-threshold(10), heath-check(Internet_SLA)
+  Members(2):
+    1: Seq_num(1 port1 virtual-wan-link), alive, latency: 68.805, selected
+    2: Seq_num(2 port2 virtual-wan-link), alive, latency: 68.611, selected
+```
+
+`port1` est redevenu le membre privilégié (position 1).
+
+![Service SD-WAN après retour à la normale](images/sdwan-failover-return-service.png)
+
+*Le service SD-WAN a replacé `port1` en position 1 (`Seq_num 1`), confirmant le retour d'ISP1 comme membre privilégié.*
+
+Enfin, la session de PC1 est vérifiée :
+
+```bash
+diagnose sys session list | grep "172.16.1.100"
+```
+
+Résultat :
+
+```text
+hook=post dir=org act=snat 172.16.1.100:2453->8.8.8.8:8(192.168.120.10:7570)
+hook=pre dir=reply act=dnat 8.8.8.8:7570->192.168.120.10:0(172.16.1.100:2453)
+```
+
+Le SNAT utilise de nouveau `192.168.120.10`, correspondant à `port1` (ISP1).
+
+![Session SD-WAN de PC1 après retour à la normale](images/sdwan-failover-return-session.png)
+
+*La session de PC1 est maintenant NATée vers `192.168.120.10`, l'adresse WAN de `port1` (ISP1). Le trafic est revenu sur le lien privilégié.*
+
+### 11.11.11 Bilan du basculement aller-retour
+
+| Étape | ISP1 (`port1`) | ISP2 (`port2`) | Trafic PC1 |
+|---|---|---|---|
+| **1. État initial** | ~68 ms ✅ | ~69 ms ✅ | ISP1 |
+| **2. Dégradation (+100 ms)** | ~170 ms ❌ | ~70 ms ✅ | **ISP2** |
+| **3. Retour à la normale** | ~68 ms ✅ | ~68 ms ✅ | **ISP1** |
+
+**Validation** : le SD-WAN est dynamique et réactif dans les deux sens — il bascule en cas de dégradation et revient au lien privilégié dès que la qualité est rétablie. ✅
+
+> **Note** : le seuil `link-cost-threshold(10)` joue un rôle clé pour éviter les oscillations entre les deux liens lorsque leurs latences sont très proches.
+
+---
+
 
 
 
