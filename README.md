@@ -2191,7 +2191,56 @@ On a donc une validation **FortiGate + SD-WAN + LAN client + NAT + DNS + Interne
 
 ---
 
-#### 11.8.3 État du SD-WAN après ce test
+#### 11.8.3 Vérification de la policy LAN → SD-WAN
+
+Après la migration de la route par défaut vers la zone SD-WAN, la policy
+`LAN-to-WAN` a été vérifiée afin de confirmer que le trafic provenant du
+LAN est bien dirigé vers la zone `virtual-wan-link`.
+
+```bash
+show firewall policy
+````
+
+Résultat :
+
+```text
+config firewall policy
+    edit 1
+        set name "LAN-to-WAN"
+        set uuid f7d3227a-aebe-51f1-cd8f-12cc37dc7092
+        set srcintf "port3"
+        set dstintf "virtual-wan-link"
+        set action accept
+        set srcaddr "all"
+        set dstaddr "all"
+        set schedule "always"
+        set service "ALL"
+        set nat enable
+    next
+end
+```
+
+![FortiGate — Policy LAN-to-WAN vers le SD-WAN](images/firewall-policy-sdwan.png)
+
+> **Figure — Vérification de la policy `LAN-to-WAN` utilisant la zone `virtual-wan-link`.**
+
+**Validation :**
+
+* `port3` → interface source du LAN ;
+* `virtual-wan-link` → zone SD-WAN de destination ;
+* `action accept` → trafic autorisé ;
+* `schedule "always"` → policy active en permanence ;
+* `service "ALL"` → tous les services autorisés ;
+* `nat enable` → NAT activé pour la sortie Internet.
+
+Cette vérification confirme que la policy utilise désormais la **zone SD-WAN**
+et non directement `port1` ou `port2`.
+
+**Validation : policy LAN → SD-WAN correctement configurée. ✅**
+
+---
+
+#### 11.8.4 État du SD-WAN après ce test
 
 ```text
 SD-WAN
