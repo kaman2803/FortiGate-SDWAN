@@ -2128,7 +2128,90 @@ SD-WAN
 2. **Créer** des règles SD-WAN pour la sélection de chemin.
 3. **Configurer** les Performance SLA.
 4. **Tester** le load balancing et le failover SD-WAN.
+
+---
+
+### 11.8 Test d'accès Internet depuis PC1 (client LAN)
+
+Maintenant que la route par défaut passe par la zone SD-WAN, il faut vérifier que les clients du LAN peuvent toujours accéder à Internet.
+
+#### 11.8.1 Vérification de l'adresse IP de PC1
+
+```bash
+ip addr show eth0
 ```
+
+Résultat :
+
+```text
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP
+    link/ether 00:50:00:00:03:00 brd ff:ff:ff:ff:ff:ff
+    inet 172.16.1.100/24 scope global eth0
+    valid_lft forever preferred_lft forever
+```
+
+**Validation** : PC1 dispose bien de l'adresse `172.16.1.100/24` obtenue par DHCP. ✅
+
+---
+
+#### 11.8.2 Test d'accès Internet avec résolution DNS
+
+Depuis PC1 :
+
+```bash
+ping -c 3 google.com
+```
+
+Résultat :
+
+![PC1 — Accès Internet via SD-WAN](images/pc1-internet-via-sdwan.png)
+
+> **Figure — Validation de l'accès Internet depuis PC1 après intégration des liens WAN dans le SD-WAN.**
+
+Extrait :
+
+```text
+PING google.com (172.217.16.238): 56 data bytes
+64 bytes from 172.217.16.238: icmp_seq=0 ttl=112 time=67.360 ms
+64 bytes from 172.217.16.238: icmp_seq=1 ttl=112 time=64.323 ms
+64 bytes from 172.217.16.238: icmp_seq=2 ttl=112 time=69.276 ms
+
+--- google.com ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 64.323/66.986/69.276 ms
+```
+
+**Interprétation** :
+
+- `google.com` a été résolu en `172.217.16.238` → la **résolution DNS fonctionne**.
+- 3 paquets sur 3 reçus → l'**accès Internet fonctionne** via le SD-WAN.
+
+**Validation : accès Internet et résolution DNS fonctionnels depuis PC1 via le SD-WAN. ✅**
+On a donc une validation **FortiGate + SD-WAN + LAN client + NAT + DNS + Internet**.
+
+---
+
+#### 11.8.3 État du SD-WAN après ce test
+
+```text
+SD-WAN
+├── Status                           ✅ Activé
+├── Zone "virtual-wan-link"          ✅ Existe
+├── Membre 1 (port1)                 ✅ Gateway 192.168.120.1
+├── Membre 2 (port2)                 ✅ Gateway 192.168.121.1
+├── Health-checks par défaut         ✅ Configurés (5)
+├── Route par défaut SD-WAN          ✅ Créée
+├── Table de routage                 ✅ Correcte
+├── Test Internet depuis FortiGate   ✅
+└── Test Internet depuis PC1         ✅
+```
+
+**Ce qui reste à faire :**
+
+1. **Créer** des règles SD-WAN pour la sélection de chemin.
+2. **Configurer** les Performance SLA.
+3. **Tester** le load balancing et le failover SD-WAN.
+
 
 
 
