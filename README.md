@@ -12,22 +12,34 @@
 2. [Objectifs](#2-objectifs)
 3. [Services et fonctionnalités](#3-services-et-fonctionnalités)
 4. [Architecture du laboratoire](#4-architecture-du-laboratoire)
-5. [Plan d'adressage](#5-plan-d'adressage)
+5. [Plan d'adressage](#5-plan-dadressage)
 6. [Technologies utilisées](#6-technologies-utilisées)
 7. [Configuration du réseau LAN](#7-configuration-du-réseau-lan)
 8. [Configuration des interfaces WAN](#8-configuration-des-interfaces-wan)
 9. [Configuration du routage](#9-configuration-du-routage)
 10. [Configuration du NAT](#10-configuration-du-nat)
 11. [Configuration du SD-WAN](#11-configuration-du-sd-wan)
+    - [11.1 État initial du SD-WAN](#111-vérification-de-létat-initial-du-sd-wan)
+    - [11.2 Activation du SD-WAN](#112-activation-du-sd-wan)
+    - [11.3 Tentative d'ajout de port1 (échec)](#113-tentative-dajout-de-port1-comme-membre-échec-cli--gui)
+    - [11.4 Migration de port1](#114-migration-de-port1-vers-sd-wan-via-gui)
+    - [11.5 Migration de port2](#115-migration-de-port2-vers-sd-wan-via-gui)
+    - [11.6 Configuration des gateways](#116-configuration-des-gateways-des-membres-sd-wan)
+    - [11.7 Migration des routes](#117-migration-des-routes-vers-sd-wan)
+    - [11.8 Test d'accès Internet depuis PC1](#118-test-daccès-internet-depuis-pc1-client-lan)
+    - [11.9 Performance SLA](#119-configuration-dune-performance-sla)
+    - [11.10 Règle SD-WAN Best Quality](#1110-configuration-dune-règle-sd-wan--best-quality)
+    - [11.11 Dégradation et basculement](#1111-test-de-sélection-du-meilleur-lien-sous-dégradation)
 
 ---
+
 ## 1. Présentation du projet
 
 Ce projet consiste à mettre en œuvre une architecture **SD-WAN (Software-Defined Wide Area Network)** avec un **FortiGate-VM sous FortiOS 7.6.2**, dans un environnement de laboratoire virtualisé avec **EVE-NG**.
 
-L'objectif est de simuler une entreprise disposant de **deux accès WAN/Internet indépendants (ISP1 et ISP2)** et d'un réseau LAN interne.
+L'objectif est de simuler une entreprise disposant de **deux chemins WAN virtuels distincts représentant deux fournisseurs Internet (ISP1 et ISP2)** et d'un réseau LAN interne.
 
-Le FortiGate est utilisé pour centraliser la connectivité Internet et mettre en œuvre une **sélection intelligente des chemins réseau** grâce aux fonctionnalités SD-WAN.
+Le FortiGate est utilisé pour centraliser la connectivité Internet et mettre en œuvre une **sélection des chemins réseau** grâce aux fonctionnalités SD-WAN.
 
 Le projet permet d'étudier :
 
@@ -1061,9 +1073,9 @@ Le client atteint la passerelle LAN, mais l'adresse obtenue n'est pas cohérente
 
 ---
 
-#### 9.6.2 Diagnostic — incohérence GUI / CLI
+#### 9.6.2 Diagnostic — IPAM et attribution DHCP
 
-Lors de la vérification dans l'interface graphique **Network → Interfaces → LAN (port3)**, le mode **IPAM** apparaissait comme sélectionné dans la section **Addressing mode**.
+Lors de la vérification dans l'interface graphique **Network → Interfaces → LAN (port3)**, le mode **IPAM** apparaissait comme sélectionné dans la section **Addressing mode**. Cette configuration a été identifiée comme la cause de l'attribution d'une adresse hors du pool DHCP configuré.
 
 ![Configuration initiale de l'interface LAN avec IPAM sélectionné](images/lan-ipam.png)
 
@@ -1088,9 +1100,9 @@ L'interface était donc bien configurée avec une adresse IP statique :
 172.16.1.1/24
 ```
 
-**Conclusion** : le problème concernait l'**affichage et le mode d'adressage présenté par le GUI**, et non l'adresse IP configurée sur `port3`. Cette incohérence GUI/CLI expliquait pourquoi le serveur DHCP distribuait des adresses hors plage.
+**Conclusion** : le premier `172.16.1.10` n'était pas une adresse hors plage : elle appartenait à la plage DHCP initialement configurée. La plage a ensuite été modifiée de `172.16.1.10 - 172.16.1.100` vers `172.16.1.100 - 172.16.1.200`. Après cette modification, le passage du mode d'adressage à Manual et le renouvellement du bail DHCP ont permis de vérifier que PC1 obtenait correctement une adresse dans la nouvelle plage.
 
-> ⚠️ **Point d'attention** : une incohérence entre l'affichage GUI et la configuration CLI peut survenir, notamment sur le mode d'adressage (`Manual` vs `IPAM`). Il est recommandé de **vérifier dans les deux interfaces** après une configuration.
+> ⚠️ **Point d'attention** : en cas de divergence entre le GUI et la CLI, vérifier les deux représentations et valider le comportement réel du service DHCP après modification.
 
 ---
 
@@ -1234,8 +1246,9 @@ Ces deux points seront traités dans les sections suivantes.
 Cette étape confirme que :
 
 - Le **serveur DHCP du FortiGate** distribue correctement les adresses.
-- L'**incohérence GUI/CLI** sur le mode d'adressage (`IPAM` vs `Manual`) peut fausser la distribution des adresses.
-- Il est **indispensable** de vérifier la cohérence entre les deux interfaces après une configuration.
+- Le mode **IPAM** sélectionné dans le GUI provoquait l'attribution initiale d'une adresse hors du pool DHCP configuré.
+- Le passage à **Manual** a permis de rétablir une attribution conforme au pool DHCP.
+- Il est **indispensable** de vérifier le mode d'adressage dans le GUI et de valider le comportement réel du service DHCP après configuration.
 
 ---
 
@@ -1364,7 +1377,9 @@ FortiGate-SDWAN
 
 Le SD-WAN (Software-Defined Wide Area Network) permet de gérer intelligemment plusieurs liens WAN en fonction de règles et de la qualité mesurée des liens.
 
-### 11.1 Vérification de l'état initial du SD-WAN
+---
+
+## 11.1 Vérification de l'état initial du SD-WAN
 
 Avant toute modification, la configuration SD-WAN existante a été vérifiée.
 
@@ -1414,7 +1429,7 @@ end
 
 ---
 
-### 11.2 Activation du SD-WAN
+## 11.2 Activation du SD-WAN
 
 Le SD-WAN a d'abord été activé avec :
 
@@ -1450,7 +1465,7 @@ set status enable
 
 ---
 
-### 11.3 Tentative d'ajout de port1 comme membre (échec CLI + GUI)
+## 11.3 Tentative d'ajout de port1 comme membre (échec CLI + GUI)
 
 Une première tentative d'ajout de `port1` comme membre SD-WAN a été effectuée en CLI :
 
@@ -1485,7 +1500,7 @@ Le formulaire `Edit SD-WAN Member` affiche la liste des interfaces disponibles d
 
 ---
 
-#### 11.3.1 Cause identifiée
+### 11.3.1 Cause identifiée
 
 La cause de ce blocage a été **confirmée** par la suite via le wizard `Integrate Interface` (section 11.4). L'interface `port1` est **référencée dans deux configurations actives** :
 
@@ -1502,11 +1517,11 @@ Tant que ces références existent, FortiOS **refuse** d'ajouter `port1` comme m
 
 ---
 
-### 11.4 Migration de port1 vers SD-WAN (via GUI)
+## 11.4 Migration de port1 vers SD-WAN (via GUI)
 
 La commande CLI directe n'étant pas possible (erreur `entry not found in datasource`), la migration a été effectuée via l'**interface graphique FortiGate**, qui gère automatiquement la migration des références existantes.
 
-#### 11.4.1 Accès à la fonction `Integrate Interface`
+### 11.4.1 Accès à la fonction `Integrate Interface`
 
 Dans **Network → Interfaces**, un **clic droit** sur `port1` (ou le menu **More**) permet d'accéder à la fonction **`Integrate Interface`**.
 
@@ -1518,7 +1533,7 @@ Dans **Network → Interfaces**, un **clic droit** sur `port1` (ou le menu **Mor
 
 ---
 
-#### 11.4.2 Étape 1/4 — Choix du mode de migration
+### 11.4.2 Étape 1/4 — Choix du mode de migration
 
 Le wizard **Move port1 into an interface** propose 3 options :
 
@@ -1536,7 +1551,7 @@ L'option **`Migrate to SD-WAN`** a été sélectionnée.
 
 ---
 
-#### 11.4.3 Étape 2/4 — Choix de la zone SD-WAN
+### 11.4.3 Étape 2/4 — Choix de la zone SD-WAN
 
 L'étape suivante demande de choisir la **zone SD-WAN cible**.
 
@@ -1548,9 +1563,9 @@ Une seule zone est disponible : **`virtual-wan-link`** (zone par défaut).
 
 ---
 
-#### 11.4.4 Étape 3/4 — Review Settings
+### 11.4.4 Étape 3/4 — Review Settings
 
-Le wizard affiche **toutes les références à `port1`** qui seront automatiquement migrées :
+Le wizard détecte les références à `port1` et **propose** leur migration :
 
 | Name | Object Type | Action |
 |---|---|---|
@@ -1559,9 +1574,9 @@ Le wizard affiche **toutes les références à `port1`** qui seront automatiquem
 
 ![Wizard — Étape 3 : Review Settings](images/sdwan-migration-04-step3.png)
 
-*Étape 3 du wizard : les deux configurations qui référencent `port1` sont détectées. L'action `Replace Instance` remplacera `port1` par `virtual-wan-link` dans ces objets.*
+*Étape 3 du wizard : les configurations qui référencent `port1` sont détectées et une action `Replace Instance` est proposée. Le résultat effectivement appliqué est vérifié dans les étapes suivantes.*
 
-**Interprétation** : les deux configurations qui référencent `port1` sont :
+**Interprétation** : le wizard identifie les deux objets suivants comme références à `port1` :
 
 - La **policy NAT** `LAN-to-WAN`
 - La **route statique** par défaut (`edit 1`)
@@ -1570,7 +1585,7 @@ FortiOS va automatiquement remplacer `port1` par `virtual-wan-link` dans ces deu
 
 ---
 
-#### 11.4.5 Confirmation
+### 11.4.5 Confirmation
 
 Une boîte de dialogue de confirmation demande de valider les changements.
 
@@ -1580,7 +1595,7 @@ Une boîte de dialogue de confirmation demande de valider les changements.
 
 ---
 
-#### 11.4.6 Étape 4/4 — Summary
+### 11.4.6 Étape 4/4 — Summary
 
 Après validation, le wizard affiche le **récapitulatif des migrations** :
 
@@ -1599,7 +1614,8 @@ Après validation, le wizard affiche le **récapitulatif des migrations** :
 > **Note** : la policy `LAN-to-WAN` référence désormais `virtual-wan-link` au lieu de `port1`. La route statique a été automatiquement conservée (le FortiOS a déterminé qu'aucun changement n'était nécessaire).
 
 ---
-#### 11.4.7 Validation finale — Ajout de port1 comme membre
+
+### 11.4.7 Validation finale — Ajout de port1 comme membre
 
 Après la migration GUI, l'ajout de `port1` comme membre SD-WAN a été effectué en CLI **sans erreur** :
 
@@ -1648,7 +1664,7 @@ end
 
 ---
 
-#### 11.4.8 Bilan de la migration de port1
+### 11.4.8 Bilan de la migration de port1
 
 | Étape | Méthode | Résultat |
 |---|---|---|
@@ -1657,13 +1673,13 @@ end
 | 3. Migration via GUI | `Integrate Interface` | ✅ Migration réussie |
 | 4. Ajout final CLI | `set interface "port1"` | ✅ **Accepté** |
 
-**Conclusion** : `port1` est maintenant membre de la zone SD-WAN `virtual-wan-link`, et ses références (route + policy NAT) ont été automatiquement migrées vers la zone.
+**Conclusion** : `port1` est maintenant membre de la zone SD-WAN `virtual-wan-link`. La policy `LAN-to-WAN` a été migrée vers la zone SD-WAN ; la route statique sera vérifiée et traitée séparément dans la section 11.7.
 
 ---
 
-### 11.5 Migration de port2 vers SD-WAN (via GUI)
+## 11.5 Migration de port2 vers SD-WAN (via GUI)
 
-Comme pour `port1`, l'ajout direct de `port2` en CLI aurait échoué (références bloquantes). La migration a donc été effectuée **via l'interface graphique**, avec la même procédure `Integrate Interface`.
+La migration de `port2` a été effectuée **via l'interface graphique**, avec la même procédure `Integrate Interface` utilisée pour `port1`.
 
 La procédure est identique à celle de `port1` (section 11.4) :
 
@@ -1675,7 +1691,7 @@ La procédure est identique à celle de `port1` (section 11.4) :
 6. Confirmation → **OK**
 7. Étape 4 : Summary
 
-#### 11.5.1 Étape 4/4 — Summary
+### 11.5.1 Étape 4/4 — Summary
 
 Après validation, le wizard affiche le récapitulatif des migrations :
 
@@ -1687,19 +1703,19 @@ Après validation, le wizard affiche le récapitulatif des migrations :
 
 ![Wizard port2 — Étape 4 : Summary](images/sdwan-migration-07-port2-summary.png)
 
-*Étape 4 du wizard pour `port2` : la zone `virtual-wan-link` et la policy `LAN-to-WAN` ont été mises à jour. La route statique n'a pas eu besoin d'être modifiée (elle avait déjà été migrée lors de la migration de `port1`).*
+*Étape 4 du wizard pour `port2` : la zone `virtual-wan-link` et la policy `LAN-to-WAN` ont été mises à jour. Le wizard indique `No changes` pour la route statique.*
 
 **Interprétation** :
 
 - La zone `virtual-wan-link` a été **mise à jour** pour inclure `port2`.
 - La policy `LAN-to-WAN` a été **mise à jour** pour retirer la référence à `port2` (remplacée par `virtual-wan-link`).
-- La route statique `2` n'a **pas eu besoin** d'être modifiée — elle avait déjà été migrée lors de `port1` (les deux routes par défaut pointaient vers la même zone SD-WAN).
+- La route statique `2` n'a **pas été modifiée par cette étape**. Son état sera vérifié ensuite dans la section 11.6 puis traité dans la section 11.7.
 
 **Validation : la migration de `port2` vers la zone SD-WAN est terminée. ✅**
 
 ---
 
-#### 11.5.2 Validation finale — Ajout de port2 comme membre
+### 11.5.2 Validation finale — Ajout de port2 comme membre
 
 Après la migration GUI, l'ajout de `port2` comme membre SD-WAN a été effectué en CLI **sans erreur** :
 
@@ -1766,25 +1782,24 @@ Vérification visuelle dans le GUI (**Network → SD-WAN → SD-WAN Zones**) :
 **Validation : les deux interfaces WAN sont membres de la zone SD-WAN `virtual-wan-link`. ✅**
 ---
 
-#### 11.5.3 Bilan de la migration de port2
+### 11.5.3 Bilan de la migration de port2
 
 | Étape | Méthode | Résultat |
 |---|---|---|
 | 1. Migration via GUI | `Integrate Interface` sur `port2` | ✅ Migration réussie |
 | 2. Ajout final CLI | `set interface "port2"` | ✅ **Accepté** |
 
-**Conclusion** : `port2` est maintenant membre de la zone SD-WAN `virtual-wan-link`, comme `port1`. La policy NAT a été automatiquement mise à jour pour référencer la zone au lieu de l'interface physique.
+**Conclusion** : `port2` est maintenant membre de la zone SD-WAN `virtual-wan-link`, comme `port1`. La policy `LAN-to-WAN` utilise la zone SD-WAN au lieu des interfaces physiques. Les routes statiques sont traitées séparément dans la section 11.7.
 
 ---
 
-
-### 11.6 Configuration des gateways des membres SD-WAN
+## 11.6 Configuration des gateways des membres SD-WAN
 
 Après l'ajout de `port1` et `port2` comme membres SD-WAN, une vérification a montré qu'**aucun gateway n'était défini** sur les membres.
 
 ---
 
-#### 11.6.1 Vérification initiale des routes statiques
+### 11.6.1 Vérification initiale des routes statiques
 
 Vérification des routes statiques :
 
@@ -1811,7 +1826,7 @@ end
 
 ---
 
-#### 11.6.2 Vérification initiale des membres SD-WAN
+### 11.6.2 Vérification initiale des membres SD-WAN
 
 Vérification des membres SD-WAN :
 
@@ -1852,7 +1867,7 @@ end
 
 ---
 
-#### 11.6.3 Configuration des gateways
+### 11.6.3 Configuration des gateways
 
 Les gateways des deux membres SD-WAN ont été définies en CLI :
 
@@ -1877,7 +1892,7 @@ end
 
 ---
 
-#### 11.6.4 Vérification finale
+### 11.6.4 Vérification finale
 
 ```bash
 show system sdwan
@@ -1914,7 +1929,7 @@ config system sdwan
 
 ---
 
-#### 11.6.5 État du SD-WAN après cette étape
+### 11.6.5 État du SD-WAN après cette étape
 
 ```text
 SD-WAN
@@ -1927,13 +1942,13 @@ SD-WAN
 └── Routes statiques                 ⚠️ Référencent port1/port2 (à revoir)
 ```
 
-### 11.7 Migration des routes vers SD-WAN
+## 11.7 Migration des routes vers SD-WAN
 
 Une fois les membres SD-WAN configurés avec leurs gateways (section 11.6), il reste à faire pointer la **route par défaut** vers la zone SD-WAN au lieu des interfaces physiques.
 
 ---
 
-#### 11.7.1 Tentative de modification de la route 1 (échec)
+### 11.7.1 Tentative de modification de la route 1 (échec)
 
 La première tentative a consisté à modifier uniquement la **route 1** pour la faire pointer vers la zone SD-WAN :
 
@@ -1965,7 +1980,7 @@ Command fail. Return code 1
 
 ---
 
-#### 11.7.2 Décision — suppression des routes existantes
+### 11.7.2 Décision — suppression des routes existantes
 
 Pour résoudre le conflit, les deux routes statiques existantes ont été **supprimées** :
 
@@ -1993,7 +2008,7 @@ end
 
 ---
 
-#### 11.7.3 Création d'une route SD-WAN unique
+### 11.7.3 Création d'une route SD-WAN unique
 
 Une **nouvelle route unique** pointant vers la zone SD-WAN a été créée :
 
@@ -2040,7 +2055,7 @@ end
 
 ---
 
-#### 11.7.4 Vérification de la table de routage
+### 11.7.4 Vérification de la table de routage
 
 ```bash
 get router info routing-table all
@@ -2080,7 +2095,7 @@ C       192.168.121.0/24 is directly connected, port2
 
 ---
 
-#### 11.7.5 Test d'accès Internet depuis le FortiGate
+### 11.7.5 Test d'accès Internet depuis le FortiGate
 
 Depuis le FortiGate :
 
@@ -2107,7 +2122,7 @@ round-trip min/avg/max = 71.5/76.6/88.9 ms
 
 ---
 
-#### 11.7.6 État du SD-WAN après migration des routes
+### 11.7.6 État du SD-WAN après migration des routes
 
 ```text
 SD-WAN
@@ -2131,11 +2146,11 @@ SD-WAN
 
 ---
 
-### 11.8 Test d'accès Internet depuis PC1 (client LAN)
+## 11.8 Test d'accès Internet depuis PC1 (client LAN)
 
 Maintenant que la route par défaut passe par la zone SD-WAN, il faut vérifier que les clients du LAN peuvent toujours accéder à Internet.
 
-#### 11.8.1 Vérification de l'adresse IP de PC1
+### 11.8.1 Vérification de l'adresse IP de PC1
 
 ```bash
 ip addr show eth0
@@ -2154,7 +2169,7 @@ Résultat :
 
 ---
 
-#### 11.8.2 Test d'accès Internet avec résolution DNS
+### 11.8.2 Test d'accès Internet avec résolution DNS
 
 Depuis PC1 :
 
@@ -2191,7 +2206,7 @@ On a donc une validation **FortiGate + SD-WAN + LAN client + NAT + DNS + Interne
 
 ---
 
-#### 11.8.3 Vérification de la policy LAN → SD-WAN
+### 11.8.3 Vérification de la policy LAN → SD-WAN
 
 Après la migration de la route par défaut vers la zone SD-WAN, la policy
 `LAN-to-WAN` a été vérifiée afin de confirmer que le trafic provenant du
@@ -2240,7 +2255,7 @@ et non directement `port1` ou `port2`.
 
 ---
 
-#### 11.8.4 État du SD-WAN après ce test
+### 11.8.4 État du SD-WAN après ce test
 
 ```text
 SD-WAN
@@ -2285,7 +2300,7 @@ Les seuils configurés sont :
 
 ---
 
-#### 11.9.2 Création du health-check `Internet_SLA`
+### 11.9.2 Création du health-check `Internet_SLA`
 
 Lors de la création du health-check, le nom `Internet-SLA` a d'abord été
 refusé par FortiOS :
@@ -2328,7 +2343,7 @@ health-check `Internet_SLA` avec les paramètres configurés.
 
 ---
 
-#### 11.9.3 Diagnostic des liens
+### 11.9.3 Diagnostic des liens
 
 La commande suivante permet de vérifier en temps réel l'état du Performance
 SLA sur les deux membres SD-WAN :
@@ -2373,7 +2388,7 @@ Le champ `sla_map=0x1` indique que le seuil SLA configuré est respecté.
 
 ---
 
-#### 11.9.4 État du SD-WAN après SLA
+### 11.9.4 État du SD-WAN après SLA
 
 ```text
 SD-WAN
@@ -2777,7 +2792,7 @@ Résultat :
 qdisc netem 8003: root refcnt 2 limit 1000 delay 100ms
 ```
 
-La latence supplémentaire de `100 ms` est donc bien active sur `vnet0`.
+La configuration `netem` avec une latence supplémentaire de `100 ms` est donc bien active sur `vnet0`.
 
 ### 11.11.5 Observation de la Performance SLA
 
@@ -2795,14 +2810,14 @@ Seq(1 port1): state(alive), packet-loss(0.000%), latency(170.244), jitter(7.993)
 Seq(2 port2): state(alive), packet-loss(0.000%), latency(70.217), jitter(7.218), mos(4.359), bandwidth-up(9999999), bandwidth-dw(10000000), bandwidth-bi(19999999), sla_map=0x1
 ```
 
-La dégradation est clairement visible :
+La dégradation observée est clairement visible :
 
 | Lien | Latence | Perte | État |
 |---|---|---|---|
 | `port1` / ISP1 | **170.244 ms** | 0 % | alive |
 | `port2` / ISP2 | **70.217 ms** | 0 % | alive |
 
-Le lien ISP1 reste disponible, mais sa latence est devenue nettement supérieure à celle d'ISP2. Sa SLA n'est plus respectée (`sla_map=0x0`).
+Le lien ISP1 reste disponible (`alive`), mais sa latence est devenue nettement supérieure à celle d'ISP2. Le résultat indique que le critère SLA configuré n'est plus respecté sur `port1` (`sla_map=0x0`).
 
 ![Performance SLA après dégradation](images/sdwan-failover-health-check.png)
 
@@ -2826,11 +2841,11 @@ Service(1): Address Mode(IPV4) flags=0x4200 use-shortcut-sla use-shortcut
     2: Seq_num(1 port1 virtual-wan-link), alive, latency: 168.800, selected
 ```
 
-`port2` présente désormais la meilleure latence et est placé en position 1.
+`port2` présente désormais la meilleure latence et apparaît en première position dans l'ordre des membres évalués par le service.
 
 ![Décision de la règle SD-WAN](images/sdwan-failover-service.png)
 
-*Le service SD-WAN a réorganisé les membres : `port2` est passé en premier (`Seq_num 2`), `port1` en deuxième (`Seq_num 1`).*
+*Le diagnostic du service présente `port2` en première position (`Seq_num 2`) et `port1` en deuxième (`Seq_num 1`). La session réelle de PC1 est ensuite utilisée pour confirmer le chemin effectivement emprunté.*
 
 ### 11.11.7 Vérification de la session réelle de PC1
 
@@ -2985,8 +3000,3 @@ Le SNAT utilise de nouveau `192.168.120.10`, correspondant à `port1` (ISP1).
 > **Note** : le seuil `link-cost-threshold(10)` joue un rôle clé pour éviter les oscillations entre les deux liens lorsque leurs latences sont très proches.
 
 ---
-
-
-
-
-
